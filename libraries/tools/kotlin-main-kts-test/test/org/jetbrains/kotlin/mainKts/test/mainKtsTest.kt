@@ -282,6 +282,42 @@ class MainKtsTest {
     }
 
     @Test
+    fun testHelloSerializationViaCompilerOptions() {
+        // KT-47384: Test that @file:CompilerOptions("-Xplugin=...") works for loading compiler plugins during script refinement
+        if (!isRunningTestOnK2) return // Only supported on K2
+        val serializationPluginClasspath = System.getProperty("kotlin.script.test.kotlinx.serialization.plugin.classpath")!!
+        val scriptFile = File.createTempFile("hello-serialization-via-compiler-options", ".main.kts").apply {
+            deleteOnExit()
+            writeText(
+                """
+                @file:CompilerOptions("-Xplugin=$serializationPluginClasspath")
+                @file:DependsOn("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+                import kotlinx.serialization.*
+                import kotlinx.serialization.json.*
+
+                @Serializable
+                data class User(val firstName: String, val lastName: String)
+
+                val jsonData = Json.encodeToString(User("James", "Bond"))
+                println(jsonData)
+
+                val obj = Json.decodeFromString<User>(${'"'}${'"'}${'"'}{"firstName":"James", "lastName":"Bond"}${'"'}${'"'}${'"'})
+                println(obj)
+                """.trimIndent()
+            )
+        }
+        val out = captureOut {
+            val res = evalFile(scriptFile)
+            assertSucceeded(res)
+        }.lines()
+        assertEquals(
+            listOf("""{"firstName":"James","lastName":"Bond"}""", "User(firstName=James, lastName=Bond)"),
+            out
+        )
+    }
+
+    @Test
     fun testUtf8Bom() {
         val scriptPath = "$TEST_DATA_ROOT/utf8bom.main.kts"
         Assert.assertTrue("Expect file '$scriptPath' to start with UTF-8 BOM", File(scriptPath).readText().startsWith(UTF8_BOM))

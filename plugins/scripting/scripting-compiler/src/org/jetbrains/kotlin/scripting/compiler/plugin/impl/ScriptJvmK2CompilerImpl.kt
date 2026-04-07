@@ -13,6 +13,7 @@ import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.fir.reportToMessageCollector
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
+import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.cli.jvm.compiler.legacy.pipeline.ModuleCompilerEnvironment
 import org.jetbrains.kotlin.cli.jvm.compiler.legacy.pipeline.convertAnalyzedFirToIr
 import org.jetbrains.kotlin.cli.jvm.compiler.legacy.pipeline.generateCodeFromIr
@@ -23,6 +24,7 @@ import org.jetbrains.kotlin.diagnostics.impl.BaseDiagnosticsCollector
 import org.jetbrains.kotlin.diagnostics.impl.DiagnosticsCollectorImpl
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.SessionConfiguration
+import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirScript
@@ -201,7 +203,8 @@ class ScriptJvmK2CompilerImpl(
                 updatedCompilerOptions,
                 reportingCtx.messageCollector,
                 ignoredOptionsReportingState,
-                true
+                true,
+                parentDisposable = state.compilerContext.disposable ?: state.compilerContext.environment.project
             )
         }
 
@@ -215,11 +218,14 @@ class ScriptJvmK2CompilerImpl(
 
         val moduleData = state.moduleDataProvider.addNewScriptModuleData(Name.special("<script-${script.name ?: "main"}>"))
 
+        // Re-read extension registrars in case new plugins were loaded during refinement (KT-47384)
+        val extensionRegistrars = compilerConfiguration.getCompilerExtensions(FirExtensionRegistrar)
+
         val session = createSourceSession(
             moduleData,
             AbstractProjectFileSearchScope.EMPTY,
             createIncrementalCompilationSymbolProviders = { null },
-            state.extensionRegistrars,
+            extensionRegistrars,
             compilerConfiguration,
             context = state.sessionFactoryContext,
             needRegisterJavaElementFinder = true,

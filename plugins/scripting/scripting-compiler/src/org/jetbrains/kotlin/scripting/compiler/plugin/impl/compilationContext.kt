@@ -180,9 +180,10 @@ internal fun CompilerConfiguration.updateWithCompilerOptions(
     compilerOptions: List<String>,
     messageCollector: ScriptDiagnosticsMessageCollector,
     ignoredOptionsReportingState: IgnoredOptionsReportingState,
-    isRefinement: Boolean
+    isRefinement: Boolean,
+    parentDisposable: Disposable? = null
 ) {
-    updateWithCompilerOptions(compilerOptions) {
+    updateWithCompilerOptions(compilerOptions, parentDisposable = parentDisposable) {
         validateArgumentsAllErrors(it.errors).takeIf { errors -> errors.isNotEmpty() }?.let { errors ->
             errors.forEach { error ->
                 messageCollector.report(CompilerMessageSeverity.ERROR, error)
@@ -202,6 +203,7 @@ internal fun CompilerConfiguration.updateWithCompilerOptions(
 
 internal fun CompilerConfiguration.updateWithCompilerOptions(
     compilerOptions: List<String>,
+    parentDisposable: Disposable? = null,
     validate: (K2JVMCompilerArguments) -> Boolean = {
         validateArguments(it.errors)?.let { throw Exception("Error parsing arguments: $it") } ?: true
     }
@@ -209,6 +211,12 @@ internal fun CompilerConfiguration.updateWithCompilerOptions(
     val compilerArguments = makeScriptCompilerArguments(compilerOptions)
 
     if (!validate(compilerArguments)) return
+
+    // Load compiler plugins from -Xplugin/-Xcompiler-plugin if a disposable is available (KT-47384).
+    // This enables @file:CompilerOptions("-Xplugin=...") in scripts to load plugins during refinement.
+    if (parentDisposable != null) {
+        loadPluginsFromArguments(compilerArguments, parentDisposable)
+    }
 
     processPluginsCommandLine(compilerArguments)
 
@@ -378,6 +386,9 @@ private fun CompilerConfiguration.updateWithRefinedConfigurations(
     if (updatedCompilerOptions.isNotEmpty() &&
         updatedCompilerOptions != context.baseScriptCompilationConfiguration[ScriptCompilationConfiguration.compilerOptions]
     ) {
-        updateWithCompilerOptions(updatedCompilerOptions, messageCollector, context.ignoredOptionsReportingState, true)
+        updateWithCompilerOptions(
+            updatedCompilerOptions, messageCollector, context.ignoredOptionsReportingState, true,
+            parentDisposable = context.disposable
+        )
     }
 }

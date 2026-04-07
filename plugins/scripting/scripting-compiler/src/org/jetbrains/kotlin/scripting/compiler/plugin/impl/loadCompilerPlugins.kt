@@ -7,7 +7,11 @@
 
 package org.jetbrains.kotlin.scripting.compiler.plugin.impl
 
+import com.intellij.openapi.Disposable
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
+import org.jetbrains.kotlin.cli.common.checkPluginsArguments
+import org.jetbrains.kotlin.cli.extensionsStorage
+import org.jetbrains.kotlin.cli.jvm.plugins.PluginCliParser
 import org.jetbrains.kotlin.cli.plugins.processCompilerPluginsOptions
 import org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor
 import org.jetbrains.kotlin.compiler.plugin.ComponentRegistrar
@@ -40,6 +44,44 @@ internal fun CompilerConfiguration.loadPluginsFromClassloader(classLoader: Class
         classLoader.loadServices<CompilerPluginRegistrar>(scriptCompilationDisabledPlugins, SCRIPT_COMPILATION_DISABLE_PLUGINS_PROPERTY)
     addAll(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS, k2Registrars)
 
+}
+
+/**
+ * Loads compiler plugins from -Xplugin and -Xcompiler-plugin arguments, registers their extensions
+ * into the configuration's extension storage, and returns true if any new plugins were loaded.
+ * This is used during script refinement to support @file:CompilerOptions("-Xplugin=...").
+ */
+internal fun CompilerConfiguration.loadPluginsFromArguments(
+    arguments: K2JVMCompilerArguments,
+    parentDisposable: Disposable
+): Boolean {
+    val pluginClasspaths = arguments.pluginClasspaths.asList()
+    val pluginOptions = arguments.pluginOptions.asList()
+    val pluginConfigurations = arguments.pluginConfigurations.asList()
+    val pluginOrderConstraints = arguments.pluginOrderConstraints.asList()
+
+    if (pluginClasspaths.isEmpty() && pluginConfigurations.isEmpty()) return false
+
+    val existingRegistrarCount = getList(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS).size
+
+    checkPluginsArguments(this, false, pluginClasspaths, pluginOptions, pluginConfigurations)
+    PluginCliParser.loadPluginsSafe(
+        pluginClasspaths, pluginOptions, pluginConfigurations,
+        pluginOrderConstraints, this, parentDisposable
+    )
+
+    // Register extensions from newly loaded plugins into the configuration's extension storage
+    val allRegistrars = getList(CompilerPluginRegistrar.COMPILER_PLUGIN_REGISTRARS)
+    val newRegistrars = allRegistrars.drop(existingRegistrarCount)
+    if (newRegistrars.isEmpty()) return false
+
+    val extensionStorage = extensionsStorage
+    if (extensionStorage != null) {
+        for (registrar in newRegistrars) {
+            with(registrar) { extensionStorage.registerExtensions(this@loadPluginsFromArguments) }
+        }
+    }
+    return true
 }
 
 internal fun CompilerConfiguration.processPluginsCommandLine(arguments: K2JVMCompilerArguments) {
