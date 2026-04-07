@@ -241,6 +241,26 @@ private fun compiledScriptUniqueName(script: SourceCode, scriptCompilationConfig
 
     digestWrapper.update(COMPILED_SCRIPTS_CACHE_VERSION.toByteArray())
     addToDigest(script.text)
+
+    // Include contents of @file:Import-ed scripts in the cache key so that cache is invalidated
+    // when any imported file changes, not just when the main script changes (KT-42101)
+    val scriptBaseDir = (script as? FileBasedScriptSource)?.file?.parentFile
+    if (scriptBaseDir != null) {
+        val visitedPaths = mutableSetOf<String>()
+        fun addImportedScriptsToDigest(scriptText: String, baseDir: File) {
+            for (importPath in extractImportPaths(scriptText)) {
+                val importFile = baseDir.resolve(importPath).normalize()
+                if (visitedPaths.add(importFile.absolutePath) && importFile.isFile) {
+                    val importText = importFile.readText()
+                    addToDigest(importFile.absolutePath)
+                    addToDigest(importText)
+                    addImportedScriptsToDigest(importText, importFile.parentFile)
+                }
+            }
+        }
+        addImportedScriptsToDigest(script.text, scriptBaseDir)
+    }
+
     scriptCompilationConfiguration.notTransientData.entries
         .sortedBy { it.key.name }
         .forEach {
@@ -249,6 +269,17 @@ private fun compiledScriptUniqueName(script: SourceCode, scriptCompilationConfig
         }
     return digestWrapper.digest().toHexString()
 }
+
+// Regex to extract file paths from @file:Import("path") or @Import("path") annotations in script text.
+// This is intentionally simple: false positives (matching imports in comments) are safe — they only
+// cause unnecessary cache invalidation — while false negatives would lead to stale caches.
+private val importAnnotationRegex = Regex("""@(?:file:)?Import\s*\(([^)]*)\)""")
+private val importPathStringLiteralRegex = Regex(""""([^"\\]*)"""")
+
+private fun extractImportPaths(scriptText: String): List<String> =
+    importAnnotationRegex.findAll(scriptText).flatMap { match ->
+        importPathStringLiteralRegex.findAll(match.groupValues[1]).map { it.groupValues[1] }
+    }.toList()
 
 private fun ByteArray.toHexString(): String = joinToString("", transform = { "%02x".format(it) })
 

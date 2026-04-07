@@ -16,6 +16,7 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
+import java.nio.file.Files
 import java.util.*
 import kotlin.script.experimental.api.*
 import kotlin.script.experimental.host.toScriptSource
@@ -160,6 +161,35 @@ class MainKtsTest {
         }.lines()
 
         Assert.assertEquals(OUT_FROM_IMPORT_TEST, out)
+    }
+
+    @Test
+    fun testCacheInvalidationOnImportedFileChange() {
+        // Regression test for KT-42101:
+        // Cache should be invalidated when an @file:Import-ed file changes, not just when the main script changes
+        val tempDir = Files.createTempDirectory("kt42101CacheTest").toFile()
+        try {
+            val cacheDir = File(tempDir, "cache").also { it.mkdirs() }
+
+            val importedFile = File(tempDir, "imported.main.kts")
+            importedFile.writeText("val importedValue = \"original\"")
+
+            val mainFile = File(tempDir, "main.main.kts")
+            mainFile.writeText("@file:Import(\"imported.main.kts\")\nprintln(importedValue)")
+
+            // First run - compiles and caches
+            val out1 = evalSuccessWithOut(mainFile, cacheDir)
+            assertEquals(listOf("original"), out1)
+
+            // Modify only the imported script (main script is unchanged)
+            importedFile.writeText("val importedValue = \"updated\"")
+
+            // Second run - cache should be invalidated because an imported file changed
+            val out2 = evalSuccessWithOut(mainFile, cacheDir)
+            assertEquals(listOf("updated"), out2)
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 
     @Test
